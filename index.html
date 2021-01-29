@@ -1,0 +1,236 @@
+<html>
+<head>
+  <title>This might be scuffed</title>
+</head>
+<body>
+<script>
+const MIN_MULT = 0.0001;
+// Most likely mp3 overhead idk
+const DUMB_OFFSET = -0.030;
+
+const generateBezier = (p1, p2, p3, p4) => t => {
+  const x0 = p1;
+  const x1 = (3 * t) * (p2 - p1);
+  const x2 = (3 * (t**2)) * (p1 + p3 - 2*p2);
+  const x3 = (t**3) * (p4 - p1 + 3*p2 - 3*p3);
+  return 1 - (x0 + x1 + x2 + x3);
+};
+
+const getSV = (line, sps) => {
+  const [, index, query] = line.match(/(\d+) = E sv:(.+)/) || [];
+  if (!index) return [];
+  // Number as query = direct SV speed
+  if (!Number.isNaN(+query)) {
+    return [{
+      time: DUMB_OFFSET,
+      index: +index,
+      multiplier: Math.max(+query, MIN_MULT)
+    }];
+  }
+  const [fn] = query.split(':');
+  // Workaround for events not being able to have lengths:
+  // put the length on a SP phrase at the same index
+  const length = sps[index];
+  if (!length) throw new Error(`Corresponding SP not defined for ${fn} at ${index}`);
+
+  // Stutter: 0 at start, catch up at some point
+  if (fn === 'stutter') {
+    const [, value, min, max] = query.split(':');
+    return [
+      {
+        time: DUMB_OFFSET,
+        index: +index,
+        multiplier: Math.max(+min, MIN_MULT)
+      },
+      {
+        time: DUMB_OFFSET,
+        index: +index + (eval(value) * length),
+        multiplier: (+max-min) * (1 / (1 - eval(value)))
+      }
+    ];
+  }
+
+  // Add timing points every 1/64 (steps of 3) until length (excluded) is reached
+  const [, values, multiplier] = query.split(':');
+  const res = [];
+  let bezier;
+  let sum = 0;
+
+  if (fn === 'bezier') {
+    bezier = generateBezier(...values.split(',').map(Number));
+  } else {
+    bezier = fn === 'ease-in' ? generateBezier(0, 0, 1, 1) : generateBezier(1, 1, 0, 0);
+  }
+
+  for (let i = 0; i < length; i += 3) {
+    const t = i / length;
+    const x = +multiplier * bezier(t);
+    res.push({
+      time: DUMB_OFFSET,
+      index: +index + i,
+      multiplier: x
+    });
+    sum += x;
+  }
+  // Normalize
+  const n = res.length / sum;
+  return res.map(x => {
+    x.multiplier = Math.max(n * x.multiplier, MIN_MULT);
+    return x;
+  });
+};
+
+const getBPM = line => {
+  const [, index, bpm1000] = line.match(/(\d+) = B (.+)/) || [];
+  if (!index) return [];
+  return [[+index, bpm1000 / 1000]];
+}
+
+const convert = source => {
+  const lines = source.split("\n");
+  const start = lines.findIndex(x => x.match(/ExpertDrums/));
+  // const start = lines.findIndex(x => x.match(/HardDrums/));
+  // const start = lines.findIndex(x => x.match(/MediumDrums/));
+  // const start = lines.findIndex(x => x.match(/EasyDrums/));
+
+  const end = lines.slice(start).findIndex(x => x.match(/}/)) + start;
+
+  // Compute BPMs and timestamps
+  const bpms = [];
+  lines.forEach(line => {
+    bpms.push(...getBPM(line));
+  });
+
+  // Notes:
+  // 64 = 1, 192 = 2, 320 = 3, 448 = 4
+  // Sustains:
+  // in the last x:x:x:x:x: group, the first number is the timestamp where the sustain should stop
+  // Index:
+  // .osu "indexes" are their positions in milliseconds (arguably terrible)
+  // since we assume constant BPM, it's a shortcut away
+
+  let txt = "";
+  const notes = [];
+  const svs = [];
+  const lineRange = lines.slice(start, end);
+
+  // Get the SP phrases for the SV functions
+  const sps = {};
+  lineRange.forEach((line, i) => {
+    if (!line.includes(' = S ')) return;
+    const [, index, length] = line.match(/(\d+) = S \d (\d+)/) || [];
+    sps[index] = length;
+  });
+
+  lineRange.forEach((line, i) => {
+    // If it's not a note, it might be an SV event
+    if (!line.includes(' = N ')) {
+      svs.push(...getSV(line, sps));
+      return;
+    }
+    const [, index, note, length] = line.match(/(\d+) = N (\d) (\d+)/) || [];
+
+    const osuNote = [, 64, 192, 320, 448][note];
+    //const osuNote = [, 64, 256, 320, 448][note];
+    if (!osuNote) return;
+    let noteType = 1;
+    if (!i) noteType = 1;
+    if (+length) noteType = 128;
+
+    notes.push({
+      time: DUMB_OFFSET,
+      timeEnd: DUMB_OFFSET,
+      index: +index,
+      osuNote,
+      length: +length,
+      noteType
+    });
+  });
+
+
+  let time = DUMB_OFFSET;
+  let currentIndex;
+  let currentBpm;
+  let timingPoints = '';
+  bpms.forEach(([index, bpm]) => {
+    if (currentIndex != null) {
+      // does it look like I pulled this formula from my ass? because I kinda did tbh
+      // (the "Resolution" parameter defines how many "units" there are in a beat)
+      time += (((index - currentIndex) * 60) / (currentBpm * 192));
+
+      // Compute timestamp of notes
+      notes.forEach(note => {
+        if (index <= note.index) {
+          note.time += (((index - currentIndex) * 60) / (currentBpm * 192));
+          if (note.length) note.timeEnd += (((index - currentIndex) * 60) / (currentBpm * 192));
+        } else if (!note.found) {
+          note.found = true;
+          note.time += (((note.index - currentIndex) * 60) / (currentBpm * 192));
+          if (note.length) note.timeEnd += ((((note.index + note.length) - currentIndex) * 60) / (currentBpm * 192));
+        }
+      });
+
+      svs.forEach(sv => {
+        if (index <= sv.index) {
+          sv.time += (((index - currentIndex) * 60) / (currentBpm * 192));
+        } else if (!sv.found) {
+          sv.found = true;
+          sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * 192));
+          // Example SV timing point: 947 ,-1000,4               ,1               ,0,100          ,0,0
+          //                          time value something sample something sample ? sample volume ? ?
+          timingPoints += `\n${sv.time * 1000},-${100/sv.multiplier},3,2,0,10,0,0`
+        }
+      });
+    }
+    currentIndex = index;
+    currentBpm = bpm;
+    // The first BPM marker is usually for offset purposes, so it isn't needed
+    if (index > 0) {
+      timingPoints += `\n${time * 1000},${1000/(bpm/60)},4,1,0,10,1,0`;
+    }
+  });
+
+
+  // Compute remaining notes after last bpm marker
+  notes.forEach(note => {
+    if (!note.found) {
+      note.time += (((note.index - currentIndex) * 60) / (currentBpm * 192));
+      if (note.length) note.timeEnd += ((((note.index + note.length) - currentIndex) * 60) / (currentBpm * 192));
+    }
+  });
+
+  svs.forEach(sv => {
+    if (!sv.found) {
+      sv.found = true;
+      sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * 192));
+      timingPoints += `\n${sv.time * 1000},-${100/sv.multiplier},3,2,0,10,0,0`
+    }
+  });
+
+  notes.forEach(({
+    osuNote,
+    time,
+    timeEnd,
+    noteType
+  }) => {
+    txt += `\n${osuNote},192,${(time * 1000)},${noteType},0,${timeEnd > 0 ? `${(timeEnd * 1000)}:` : ''}0:0:0:0`;
+  });
+
+  return `[TimingPoints]${timingPoints}\n\n[HitObjects]${txt}`;
+};
+</script>
+.chart file <input type="file" id="chart" />
+<br /><br /><br />
+<textarea style="width:800px;height:500px" id="result" placeholder="Timing points and notes will appear below"></textarea>
+
+<script>
+  document.getElementById("chart").addEventListener('change', $event => {
+    const fr = new FileReader();
+    fr.addEventListener('loadend', () => {
+      document.getElementById('result').value = convert(fr.result);
+    });
+    fr.readAsText($event.target.files[0]);
+  });
+</script>
+</body>
+</html>
