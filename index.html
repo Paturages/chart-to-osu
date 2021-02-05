@@ -6,7 +6,7 @@
 <script>
 const MIN_MULT = 0.0001;
 // Most likely mp3 overhead idk
-const DUMB_OFFSET = -0.030;
+var DUMB_OFFSET = 0;
 
 const generateBezier = (p1, p2, p3, p4) => t => {
   const x0 = p1;
@@ -219,7 +219,8 @@ const convert = source => {
   return `[TimingPoints]${timingPoints}\n\n[HitObjects]${txt}`;
 };
 </script>
-.chart file <input type="file" id="chart" />
+.chart file <input type="file" id="chart" /><br />
+Offset (ms) if necessary <input type="number" id="offset" />
 <br /><br /><br />
 <textarea style="width:800px;height:500px" id="result" placeholder="Timing points and notes will appear below"></textarea>
 
@@ -230,6 +231,10 @@ const convert = source => {
       document.getElementById('result').value = convert(fr.result);
     });
     fr.readAsText($event.target.files[0]);
+  });
+  
+  document.getElementById("offset").addEventListener('change', $event => {
+    DUMB_OFFSET = Number($event.target.value) / 1000;
   });
 </script>
 </body>
