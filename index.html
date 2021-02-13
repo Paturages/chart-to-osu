@@ -1,6 +1,6 @@
 <html>
 <head>
-  <title>This might be scuffed</title>
+  <title>.chart to .osu, for some reason</title>
 </head>
 <body>
 <script>
@@ -162,11 +162,19 @@ const convert = source => {
       notes.forEach(note => {
         if (index <= note.index) {
           note.time += (((index - currentIndex) * 60) / (currentBpm * 192));
-          if (note.length) note.timeEnd += (((index - currentIndex) * 60) / (currentBpm * 192));
         } else if (!note.found) {
           note.found = true;
           note.time += (((note.index - currentIndex) * 60) / (currentBpm * 192));
-          if (note.length) note.timeEnd += ((((note.index + note.length) - currentIndex) * 60) / (currentBpm * 192));
+        }
+        
+        if (note.length) {
+          const endIndex = note.index + note.length;
+          if (index <= endIndex) {
+            note.timeEnd += (((index - currentIndex) * 60) / (currentBpm * 192));
+          } else if (note.found !== 'end') {
+            note.found = 'end';
+            note.timeEnd += (((endIndex - currentIndex) * 60) / (currentBpm * 192));
+          }
         }
       });
 
@@ -195,7 +203,9 @@ const convert = source => {
   notes.forEach(note => {
     if (!note.found) {
       note.time += (((note.index - currentIndex) * 60) / (currentBpm * 192));
-      if (note.length) note.timeEnd += ((((note.index + note.length) - currentIndex) * 60) / (currentBpm * 192));
+    }
+    if (note.length && note.found !== 'end') {
+      note.timeEnd += ((((note.index + note.length) - currentIndex) * 60) / (currentBpm * 192));
     }
   });
 
