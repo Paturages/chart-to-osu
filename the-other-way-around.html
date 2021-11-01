@@ -8,84 +8,6 @@ const MIN_MULT = 0.0001;
 // Most likely mp3 overhead idk
 var DUMB_OFFSET = 0;
 
-const generateBezier = (p1, p2, p3, p4) => t => {
-  const x0 = p1;
-  const x1 = (3 * t) * (p2 - p1);
-  const x2 = (3 * (t**2)) * (p1 + p3 - 2*p2);
-  const x3 = (t**3) * (p4 - p1 + 3*p2 - 3*p3);
-  return 1 - (x0 + x1 + x2 + x3);
-};
-
-const getSV = (line, sps) => {
-  const [, index, query] = line.match(/(\d+) = E sv:(.+)/) || [];
-  if (!index) return [];
-  // Number as query = direct SV speed
-  if (!Number.isNaN(+query)) {
-    return [{
-      time: DUMB_OFFSET,
-      index: +index,
-      multiplier: Math.max(+query, MIN_MULT)
-    }];
-  }
-  const [fn] = query.split(':');
-  // Workaround for events not being able to have lengths:
-  // put the length on a SP phrase at the same index
-  const length = sps[index];
-  if (!length) throw new Error(`Corresponding SP not defined for ${fn} at ${index}`);
-
-  // Stutter: 0 at start, catch up at some point
-  if (fn === 'stutter') {
-    const [, value, min, max] = query.split(':');
-    return [
-      {
-        time: DUMB_OFFSET,
-        index: +index,
-        multiplier: Math.max(+min, MIN_MULT)
-      },
-      {
-        time: DUMB_OFFSET,
-        index: +index + (eval(value) * length),
-        multiplier: (+max-min) * (1 / (1 - eval(value)))
-      }
-    ];
-  }
-
-  // Add timing points every 1/64 (steps of 3) until length (excluded) is reached
-  const [, values, multiplier] = query.split(':');
-  const res = [];
-  let bezier;
-  let sum = 0;
-
-  if (fn === 'bezier') {
-    bezier = generateBezier(...values.split(',').map(Number));
-  } else {
-    bezier = fn === 'ease-in' ? generateBezier(0, 0, 1, 1) : generateBezier(1, 1, 0, 0);
-  }
-
-  for (let i = 0; i < length; i += 3) {
-    const t = i / length;
-    const x = +multiplier * bezier(t);
-    res.push({
-      time: DUMB_OFFSET,
-      index: +index + i,
-      multiplier: x
-    });
-    sum += x;
-  }
-  // Normalize
-  const n = res.length / sum;
-  return res.map(x => {
-    x.multiplier = Math.max(n * x.multiplier, MIN_MULT);
-    return x;
-  });
-};
-
-const getBPM = line => {
-  const [, index, bpm1000] = line.match(/(\d+) = B (.+)/) || [];
-  if (!index) return [];
-  return [[+index, bpm1000 / 1000]];
-}
-
 let precision = 12;
 const convert = source => {
   const lines = source.split("\n");
@@ -123,7 +45,7 @@ const convert = source => {
         192: 2,
         320: 3,
         448: 4
-      }[noteId] || 0,
+      }[noteId] || 2,
       end: +end || undefined
     });
   });
@@ -137,20 +59,37 @@ const convert = source => {
   let bpm = bpms[0].bpm;
   for (let index = 384; times.length || bpms.length || svs.length; index += precision) {
     if (times.length && time >= times[0]) {
-      notes.push(...osuNotes[times.shift()].map(({ note, end }) => ({ index, note, length: end ? Math.round((end - time) * 60000 / (bpm * 192)) : 0 })));
+      notes.push(
+        ...osuNotes[times.shift()]
+          .map(({ note, end }) => ({
+            index,
+            note,
+            end,
+            length: 0
+          }))
+      );
     }
+
+    notes.forEach(note => {
+      if (note.end && time < note.end) {
+        note.length += precision;
+      }
+    });
+
     if (bpms.length && time >= bpms[0].ms) {
       bpm = bpms.shift().bpm;
       synctrack.push({ index, bpm });
     }
+
     if (svs.length && time >= svs[0].ms) {
       notes.push({ index, event: `sv:${svs.shift().value}` });
     }
+
+
     // time += <index delta> * 60 / (bpm * resolution)... but that's in seconds, so *1000
     time += (precision * 60000) / (bpm * 192);
   }
 
-  // just assume 0 length for now
   let txt = `[Song]
 {
   Offset = 0
@@ -176,7 +115,7 @@ const convert = source => {
 [ExpertDrums]
 {
 `;
-  txt += notes.map(({ note, index, event }) => event ? `  ${index} = E ${event}` : `  ${index} = N ${note} ${length}`).join("\n");
+  txt += notes.map(({ note, index, event, length }) => event ? `  ${index} = E ${event}` : `  ${index} = N ${note} ${length}`).join("\n");
   txt += "\n}";
 
   return txt;

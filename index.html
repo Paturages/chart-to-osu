@@ -7,6 +7,7 @@
 const MIN_MULT = 0.0001;
 // Most likely mp3 overhead idk
 var DUMB_OFFSET = 0;
+var ONE_KEY = false;
 
 const generateBezier = (p1, p2, p3, p4) => t => {
   const x0 = p1;
@@ -27,57 +28,65 @@ const getSV = (line, sps) => {
       multiplier: Math.max(+query, MIN_MULT)
     }];
   }
-  const [fn] = query.split(':');
-  // Workaround for events not being able to have lengths:
-  // put the length on a SP phrase at the same index
-  const length = sps[index];
-  if (!length) throw new Error(`Corresponding SP not defined for ${fn} at ${index}`);
+  const [fn, value, value2] = query.split(':');
 
-  // Stutter: 0 at start, catch up at some point
-  if (fn === 'stutter') {
-    const [, value, min, max] = query.split(':');
+  if (fn === 'bpm') {
+    const payload = [
+      {
+        time: DUMB_OFFSET,
+        index: +index,
+        bpm: +value
+      }
+    ];
+    if (+value2 >= 0) payload.push({
+      time: DUMB_OFFSET,
+      index: +index,
+      multiplier: Math.max(+value2, MIN_MULT)
+    });
+    return payload;
+  }
+
+  if (fn === 'resetbpm') {
+    const payload = [
+      {
+        time: DUMB_OFFSET,
+        index: +index,
+        resetBPM: true
+      }
+    ];
+    if (+value >= 0) payload.push({
+      time: DUMB_OFFSET,
+      index: +index,
+      multiplier: Math.max(+value, MIN_MULT)
+    });
+    return payload;
+  }
+
+  // Reset: 10000 bpm + 10x for 1 ms, then reset
+  if (fn === 'reset') {
     return [
       {
         time: DUMB_OFFSET,
         index: +index,
-        multiplier: Math.max(+min, MIN_MULT)
+        bpm: 10000
       },
       {
         time: DUMB_OFFSET,
-        index: +index + (eval(value) * length),
-        multiplier: (+max-min) * (1 / (1 - eval(value)))
+        index: +index,
+        multiplier: 10
+      },
+      {
+        time: DUMB_OFFSET + 0.001,
+        index: +index,
+        resetBPM: true // bubble that in the bpm loop
+      },
+      {
+        time: DUMB_OFFSET + 0.001,
+        index: +index,
+        multiplier: Math.max(+value, MIN_MULT)
       }
     ];
   }
-
-  // Add timing points every 1/64 (steps of 3) until length (excluded) is reached
-  const [, values, multiplier] = query.split(':');
-  const res = [];
-  let bezier;
-  let sum = 0;
-
-  if (fn === 'bezier') {
-    bezier = generateBezier(...values.split(',').map(Number));
-  } else {
-    bezier = fn === 'ease-in' ? generateBezier(0, 0, 1, 1) : generateBezier(1, 1, 0, 0);
-  }
-
-  for (let i = 0; i < length; i += 3) {
-    const t = i / length;
-    const x = +multiplier * bezier(t);
-    res.push({
-      time: DUMB_OFFSET,
-      index: +index + i,
-      multiplier: x
-    });
-    sum += x;
-  }
-  // Normalize
-  const n = res.length / sum;
-  return res.map(x => {
-    x.multiplier = Math.max(n * x.multiplier, MIN_MULT);
-    return x;
-  });
 };
 
 const getBPM = line => {
@@ -130,8 +139,7 @@ const convert = source => {
     }
     const [, index, note, length] = line.match(/(\d+) = N (\d) (\d+)/) || [];
 
-    const osuNote = [, 64, 192, 320, 448][note];
-    //const osuNote = [, 64, 256, 320, 448][note];
+    const osuNote = ONE_KEY ? 256 : [, 64, 192, 320, 448][note];
     if (!osuNote) return;
     let noteType = 1;
     if (!i) noteType = 1;
@@ -184,9 +192,16 @@ const convert = source => {
         } else if (!sv.found) {
           sv.found = true;
           sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * 192));
-          // Example SV timing point: 947 ,-1000,4               ,1               ,0,100          ,0,0
-          //                          time value something sample something sample ? sample volume ? ?
-          timingPoints += `\n${sv.time * 1000},-${100/sv.multiplier},3,2,0,10,0,0`
+
+          if (sv.resetBPM) {
+            timingPoints += `\n${sv.time * 1000},${1000/(bpm/60)},4,1,0,10,1,0`;
+          } else if (sv.bpm) {
+            timingPoints += `\n${sv.time * 1000},${1000/(sv.bpm/60)},4,1,0,10,1,0`;
+          } else {
+            // Example SV timing point: 947 ,-1000,4               ,1               ,0,100          ,0,0
+            //                          time value something sample something sample ? sample volume ? ?
+            timingPoints += `\n${sv.time * 1000},-${100/sv.multiplier},3,2,0,10,0,0`;
+          }
         }
       });
     }
@@ -213,7 +228,16 @@ const convert = source => {
     if (!sv.found) {
       sv.found = true;
       sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * 192));
-      timingPoints += `\n${sv.time * 1000},-${100/sv.multiplier},3,2,0,10,0,0`
+
+      if (sv.resetBPM) {
+        timingPoints += `\n${sv.time * 1000},${1000/(currentBpm/60)},4,1,0,10,1,0`;
+      } else if (sv.bpm) {
+        timingPoints += `\n${sv.time * 1000},${1000/(sv.bpm/60)},4,1,0,10,1,0`;
+      } else {
+        // Example SV timing point: 947 ,-1000,4               ,1               ,0,100          ,0,0
+        //                          time value something sample something sample ? sample volume ? ?
+        timingPoints += `\n${sv.time * 1000},-${100/sv.multiplier},3,2,0,10,0,0`;
+      }
     }
   });
 
@@ -230,7 +254,8 @@ const convert = source => {
 };
 </script>
 .chart file <input type="file" id="chart" /><br />
-Offset (ms) if necessary <input type="number" id="offset" />
+Offset (ms) if necessary <input type="number" id="offset" /><br />
+<label>1K output <input type="checkbox" id="one_key" /></label>
 <br /><br /><br />
 <textarea style="width:800px;height:500px" id="result" placeholder="Timing points and notes will appear below"></textarea>
 
@@ -245,6 +270,10 @@ Offset (ms) if necessary <input type="number" id="offset" />
   
   document.getElementById("offset").addEventListener('change', $event => {
     DUMB_OFFSET = Number($event.target.value) / 1000;
+  });
+
+  document.getElementById("one_key").addEventListener('change', $event => {
+    ONE_KEY = $event.target.checked;
   });
 </script>
 </body>
