@@ -1,6 +1,11 @@
 <html>
 <head>
   <title>.chart to .osu, for some reason</title>
+  <style>
+html, body {
+  font-family: sans-serif;
+}
+  </style>
 </head>
 <body>
 <script>
@@ -194,13 +199,13 @@ const convert = source => {
           sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * 192));
 
           if (sv.resetBPM) {
-            timingPoints += `\n${sv.time * 1000},${1000/(bpm/60)},4,1,0,10,1,0`;
+            timingPoints += `\n${sv.time * 1000},${1000/(bpm/60)},4,1,0,50,1,0`;
           } else if (sv.bpm) {
-            timingPoints += `\n${sv.time * 1000},${1000/(sv.bpm/60)},4,1,0,10,1,0`;
+            timingPoints += `\n${sv.time * 1000},${1000/(sv.bpm/60)},4,1,0,50,1,0`;
           } else {
             // Example SV timing point: 947 ,-1000,4               ,1               ,0,100          ,0,0
             //                          time value something sample something sample ? sample volume ? ?
-            timingPoints += `\n${sv.time * 1000},-${100/sv.multiplier},3,2,0,10,0,0`;
+            timingPoints += `\n${sv.time * 1000},-${100/sv.multiplier},4,1,0,50,0,0`;
           }
         }
       });
@@ -209,7 +214,7 @@ const convert = source => {
     currentBpm = bpm;
     // The first BPM marker is usually for offset purposes, so it isn't needed
     if (index > 0) {
-      timingPoints += `\n${time * 1000},${1000/(bpm/60)},4,1,0,10,1,0`;
+      timingPoints += `\n${time * 1000},${1000/(bpm/60)},4,1,0,50,1,0`;
     }
   });
 
@@ -230,13 +235,13 @@ const convert = source => {
       sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * 192));
 
       if (sv.resetBPM) {
-        timingPoints += `\n${sv.time * 1000},${1000/(currentBpm/60)},4,1,0,10,1,0`;
+        timingPoints += `\n${sv.time * 1000},${1000/(currentBpm/60)},4,1,0,50,1,0`;
       } else if (sv.bpm) {
-        timingPoints += `\n${sv.time * 1000},${1000/(sv.bpm/60)},4,1,0,10,1,0`;
+        timingPoints += `\n${sv.time * 1000},${1000/(sv.bpm/60)},4,1,0,50,1,0`;
       } else {
         // Example SV timing point: 947 ,-1000,4               ,1               ,0,100          ,0,0
         //                          time value something sample something sample ? sample volume ? ?
-        timingPoints += `\n${sv.time * 1000},-${100/sv.multiplier},3,2,0,10,0,0`;
+        timingPoints += `\n${sv.time * 1000},-${100/sv.multiplier},4,1,0,50,0,0`;
       }
     }
   });
@@ -253,11 +258,41 @@ const convert = source => {
   return `[TimingPoints]${timingPoints}\n\n[HitObjects]${txt}`;
 };
 </script>
+<a href="https://github.com/FireFox2000000/Moonscraper-Chart-Editor/releases" target="_blank">Download Moonscraper</a>
+<br /><br />
+Note: this will only convert "Expert Drums" (4 lanes... for 4K).<br />
+You can disregard the above note if you're just converting timing points and you're not charting anything.<br />
+
+<br />
+
+<details>
+<summary>Click for SV instructions</summary>
+
+<img src="./sv.jpg" alt="" style="width:800px" /><br />
+
+This supports SVs as manually placed local events (the red flag in the left panel) in the following form: <code>sv:0.5</code> (replace by whichever value)<br />
+A value of 0 is replaced by 0.0001 so feel free to put <code>sv:0</code> events, it's quicker. Values greater than 10 aren't replaced so you're on your own.<br />
+However, you can put <code>sv:bpm:727</code> (or whichever value) to insert a BPM timing point for SV purposes. Don't forget to reset the BPM to the actual bpm with a <code>sv:resetbpm</code> afterwards.<br />
+There's also a <code>sv:reset:0.5</code> macro that puts a 10000 bpm/10x sv, then resets the BPM and puts the provided value as the SV multiplier exactly 1ms later. Yea, it's a teleport macro.<br />
+
+</details>
+
+<br />
 .chart file <input type="file" id="chart" /><br />
-Offset (ms) if necessary <input type="number" id="offset" /><br />
-<label>1K output <input type="checkbox" id="one_key" /></label>
+Offset (ms) if necessary <input type="number" id="offset" value="-17" /><br />
+<small>(the offset is usually -17ms just like quaver because osu! treats mp3s differently)</small><br />
+<label>1K output (all notes to 1 lane)<input type="checkbox" id="one_key" /></label>
 <br /><br /><br />
-<textarea style="width:800px;height:500px" id="result" placeholder="Timing points and notes will appear below"></textarea>
+<textarea style="width:800px;height:500px" id="result" placeholder="Timing points and notes will appear below:
+
+Find your osu! song folder (File > Open Song Folder in osu! editor).
+
+Open the .osu in a text editor (e.g. Sublime Text, Notepad++, Visual Studio Code... even regular Notepad works I guess) and replace TimingPoints and HitObjects as you like."></textarea>
+
+<br /><br />
+Note²: This doesn't handle SV normalization for variable BPM, use
+<a href="http://zardoru.github.io/sv-tools/" target="_blank">Agka's SV tools</a> in conjunction to this for that.<br />
+(you can conveniently edit the text above, i.e. copy/paste TimingPoints back and forth)
 
 <script>
   document.getElementById("chart").addEventListener('change', $event => {
