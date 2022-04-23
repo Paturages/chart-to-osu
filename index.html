@@ -282,7 +282,7 @@ Time signatures don't actually get converted, so you gotta set those on osu! ins
 
 This supports SVs as manually placed local events (the red flag in the left panel) in the following form: <code>sv:0.5</code> (replace by whichever value)<br />
 A value of 0 is replaced by 0.0001 so feel free to put <code>sv:0</code> events, it's quicker. Values greater than 10 aren't replaced so you're on your own.<br />
-However, you can put <code>sv:bpm:727</code> (or whichever value) to insert a BPM timing point for SV purposes. Don't forget to reset the BPM to the actual bpm with a <code>sv:resetbpm</code> afterwards.<br />
+However, you can put <code>sv:bpm:727:0.5</code> (or whichever value) to insert a BPM timing point for SV purposes. The second value is the SV multiplier. Don't forget to reset the BPM to the actual bpm with a <code>sv:resetbpm</code> afterwards.<br />
 There's also a <code>sv:reset:0.5</code> macro that puts a 10000 bpm/10x sv, then resets the BPM and puts the provided value as the SV multiplier exactly 1ms later. Yea, it's a teleport macro.<br />
 
 </details>
