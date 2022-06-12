@@ -8,7 +8,6 @@ const MIN_MULT = 0.0001;
 // Most likely mp3 overhead idk
 var DUMB_OFFSET = 0;
 
-let precision = 12;
 const convert = source => {
   const lines = source.split("\n");
   const timingPointsIndex = lines.findIndex(line => line.includes("[TimingPoints]"));
@@ -39,7 +38,7 @@ const convert = source => {
     if (!time) return;
     const [end] = rest.split(':');
     if (!osuNotes[time]) osuNotes[time] = [];
-    osuNotes[time].push({
+    const noteObj = {
       note: {
         64: 1,
         192: 2,
@@ -47,48 +46,108 @@ const convert = source => {
         448: 4
       }[noteId] || 2,
       end: +end || undefined
-    });
+    };
+    osuNotes[time].push(noteObj);
+    if (+end) {
+      if (!osuNotes[+end]) osuNotes[+end] = [];
+      osuNotes[+end].push({
+        isEnd: true,
+        note: {
+          64: 1,
+          192: 2,
+          320: 3,
+          448: 4
+        }[noteId] || 2,
+        ref: noteObj
+      });
+    }
   });
 
   const times = Object.keys(osuNotes).sort((a, b) => Number(a) - Number(b));
+  let leftoverTimes = [];
+  let leftoverSvs = [];
+  let leftoverBpms = [];
   const synctrack = [];
   const notes = [];
   let time = bpms[0].ms;
+  const startTime = time;
   // Skip the first measure, assume the constant BPM from there
   // "24" is the 1/32 interval
   let bpm = bpms[0].bpm;
-  for (let index = 384; times.length || bpms.length || svs.length; index += precision) {
-    if (times.length && time >= times[0]) {
-      notes.push(
-        ...osuNotes[times.shift()]
-          .map(({ note, end }) => ({
-            index,
-            note,
-            end,
-            length: 0
-          }))
-      );
-    }
+  let index = 384;
+  const MARGIN = 5; // milliseconds
+  const cycle = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 5, 10, 20, 40, 80, 7, 14, 28, 56, 9, 18, 36, 72, 11, 22, 44, 88, 13, 26, 52, 15, 30, 60, 128, 192, 256, 192*2, 512];
+  while ((times.length || bpms.length || svs.length || leftoverTimes.length || leftoverSvs.length || leftoverBpms.length) && cycle.length) {
+    const precision = Math.round((192*4) / cycle[0]);
 
-    notes.forEach(note => {
-      if (note.end && time < note.end) {
-        note.length += precision;
+    while (times.length && time >= times[0]) {
+      const next = times.shift();
+      if (time - next < MARGIN) {
+        for (const n of osuNotes[next]) {
+          const { isEnd, note, end, ref, noteRef } = n;
+          if (!isEnd) {
+            if (noteRef) {
+              noteRef.index = index;
+              if (noteRef.end) {
+                noteRef.length = noteRef.end - index;
+              }
+            } else {
+              n.noteRef = { index, note, length: 0 };
+              notes.push(n.noteRef);
+            }
+          } else {
+            if (ref.noteRef) {
+              if (ref.noteRef.index) {
+                ref.noteRef.length = index - ref.noteRef.index;
+              } else {
+                ref.noteRef.end = index;
+              }
+            } else {
+              ref.noteRef = { note, end: index };
+              notes.push(ref.noteRef);
+            }
+          }
+        }
+      } else {
+        leftoverTimes.push(next);
       }
-    });
-
-    if (bpms.length && time >= bpms[0].ms) {
-      bpm = bpms.shift().bpm;
-      synctrack.push({ index, bpm });
     }
 
-    if (svs.length && time >= svs[0].ms) {
-      notes.push({ index, event: `sv:${svs.shift().value}` });
+    while (bpms.length && time >= bpms[0].ms) {
+      const next = bpms.shift();
+      if (time - next.ms < MARGIN) {
+        synctrack.push({ index, bpm: next.bpm });
+      } else {
+        leftoverBpms.push(next);
+      }
     }
 
+    while (svs.length && time >= svs[0].ms) {
+      const next = svs.shift();
+      if (time - next.ms < MARGIN) {
+        notes.push({ index, event: `sv:${next.value}` });
+      } else {
+        leftoverSvs.push(next);
+      }
+    }
 
     // time += <index delta> * 60 / (bpm * resolution)... but that's in seconds, so *1000
     time += (precision * 60000) / (bpm * 192);
+    index += precision;
+
+    if (!times.length && !bpms.length && !svs.length) {
+      times.push(...leftoverTimes);
+      bpms.push(...leftoverBpms);
+      svs.push(...leftoverSvs);
+      leftoverTimes = [];
+      leftoverSvs = [];
+      leftoverBpms = [];
+      cycle.shift();
+      index = 384;
+      time = startTime;
+    }
   }
+  document.getElementById('log').innerHTML = `debug: last cycle:${cycle[0]} times left:${times.length} bpms left:${bpms.length} svs left:${svs.length}`;
 
   let txt = `[Song]
 {
@@ -107,7 +166,7 @@ const convert = source => {
   0 = TS 2
   0 = B 165671
   384 = TS 4
-  ${synctrack.map(({ index, bpm }) => `  ${index} = B ${bpm*1000}`).join('\n')}
+${synctrack.map(({ index, bpm }) => `  ${index} = B ${bpm*1000}`).join('\n')}
 }
 [Events]
 {
@@ -122,8 +181,9 @@ const convert = source => {
 };
 </script>
 .osu file <input type="file" id="chart" /><br />
-Precision (unit amount of steps) <input type="number" id="precision" value="12" />
-<br /><br /><br />
+<br />
+<div id="log"></div>
+<br /><br />
 <a id="result" download="notes.chart" target="_blank">... Load something up there will you ...</a><br />
 <textarea style="width:800px;height:500px" id="preview" placeholder="Result will appear below"></textarea>
 
@@ -139,10 +199,6 @@ Precision (unit amount of steps) <input type="number" id="precision" value="12" 
       document.getElementById('preview').value = converted;
     });
     fr.readAsText($event.target.files[0]);
-  });
-  
-  document.getElementById("precision").addEventListener('change', $event => {
-    precision = Number($event.target.value) / 1000;
   });
 </script>
 </body>
