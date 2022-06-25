@@ -75,9 +75,10 @@ const convert = source => {
   // "24" is the 1/32 interval
   let bpm = bpms[0].bpm;
   let index = 384;
-  const MARGIN = 5; // milliseconds
+  let MARGIN = 2; // milliseconds
   const cycle = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 5, 10, 20, 40, 80, 7, 14, 28, 56, 9, 18, 36, 72, 11, 22, 44, 88, 13, 26, 52, 15, 30, 60, 128, 192, 256, 192*2, 512];
   while ((times.length || bpms.length || svs.length || leftoverTimes.length || leftoverSvs.length || leftoverBpms.length) && cycle.length) {
+    if (cycle.length == 1) MARGIN = 5; // Last resort snapping
     const precision = Math.round((192*4) / cycle[0]);
 
     while (times.length && time >= times[0]) {
