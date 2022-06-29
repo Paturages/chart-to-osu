@@ -81,7 +81,7 @@ const convert = source => {
     if (cycle.length == 1) MARGIN = 5; // Last resort snapping
     const precision = Math.round((192*4) / cycle[0]);
 
-    while (times.length && time >= times[0]) {
+    while (times.length && time >= times[0] - MARGIN) {
       const next = times.shift();
       if (time - next < MARGIN) {
         for (const n of osuNotes[next]) {
@@ -114,7 +114,7 @@ const convert = source => {
       }
     }
 
-    while (bpms.length && time >= bpms[0].ms) {
+    while (bpms.length && time >= bpms[0].ms - MARGIN) {
       const next = bpms.shift();
       if (time - next.ms < MARGIN) {
         synctrack.push({ index, bpm: next.bpm });
@@ -123,7 +123,7 @@ const convert = source => {
       }
     }
 
-    while (svs.length && time >= svs[0].ms) {
+    while (svs.length && time >= svs[0].ms - MARGIN) {
       const next = svs.shift();
       if (time - next.ms < MARGIN) {
         notes.push({ index, event: `sv:${next.value}` });
