@@ -21,7 +21,7 @@ const convert = source => {
     if (value < 0) {
       svs.push({ value: Math.round(10000 / (-value)) / 100, ms: +ms });
     } else {
-      if (bpms.length < 1) bpms.push({ bpm: Math.round(60000 / (+value)), ms: +ms });
+      bpms.push({ bpm: Math.round(60000 / (+value)), ms: +ms });
     }
   });
 
@@ -117,7 +117,11 @@ const convert = source => {
     while (bpms.length && time >= bpms[0].ms - MARGIN) {
       const next = bpms.shift();
       if (time - next.ms < MARGIN) {
-        synctrack.push({ index, bpm: next.bpm });
+        if (synctrack.length) {
+          notes.push({ index, event: `sv:bpm:${next.bpm}` });
+        } else {
+          synctrack.push({ index, bpm: next.bpm });
+        }
       } else {
         leftoverBpms.push(next);
       }

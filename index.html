@@ -102,6 +102,7 @@ const getBPM = line => {
 
 const convert = source => {
   const lines = source.split("\n");
+  const RESOLUTION = +lines.find(x => x.match(/Resolution/)).split(' = ')[1];
   const start = lines.findIndex(x => x.match(/ExpertDrums/));
   // const start = lines.findIndex(x => x.match(/HardDrums/));
   // const start = lines.findIndex(x => x.match(/MediumDrums/));
@@ -169,34 +170,34 @@ const convert = source => {
     if (currentIndex != null) {
       // does it look like I pulled this formula from my ass? because I kinda did tbh
       // (the "Resolution" parameter defines how many "units" there are in a beat)
-      time += (((index - currentIndex) * 60) / (currentBpm * 192));
+      time += (((index - currentIndex) * 60) / (currentBpm * RESOLUTION));
 
       // Compute timestamp of notes
       notes.forEach(note => {
         if (index <= note.index) {
-          note.time += (((index - currentIndex) * 60) / (currentBpm * 192));
+          note.time += (((index - currentIndex) * 60) / (currentBpm * RESOLUTION));
         } else if (!note.found) {
           note.found = true;
-          note.time += (((note.index - currentIndex) * 60) / (currentBpm * 192));
+          note.time += (((note.index - currentIndex) * 60) / (currentBpm * RESOLUTION));
         }
         
         if (note.length) {
           const endIndex = note.index + note.length;
           if (index <= endIndex) {
-            note.timeEnd += (((index - currentIndex) * 60) / (currentBpm * 192));
+            note.timeEnd += (((index - currentIndex) * 60) / (currentBpm * RESOLUTION));
           } else if (note.found !== 'end') {
             note.found = 'end';
-            note.timeEnd += (((endIndex - currentIndex) * 60) / (currentBpm * 192));
+            note.timeEnd += (((endIndex - currentIndex) * 60) / (currentBpm * RESOLUTION));
           }
         }
       });
 
       svs.forEach(sv => {
         if (index <= sv.index) {
-          sv.time += (((index - currentIndex) * 60) / (currentBpm * 192));
+          sv.time += (((index - currentIndex) * 60) / (currentBpm * RESOLUTION));
         } else if (!sv.found) {
           sv.found = true;
-          sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * 192));
+          sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * RESOLUTION));
 
           if (sv.resetBPM) {
             timingPoints += `\n${sv.time * 1000},${1000/(bpm/60)},4,1,0,50,1,0`;
@@ -222,17 +223,17 @@ const convert = source => {
   // Compute remaining notes after last bpm marker
   notes.forEach(note => {
     if (!note.found) {
-      note.time += (((note.index - currentIndex) * 60) / (currentBpm * 192));
+      note.time += (((note.index - currentIndex) * 60) / (currentBpm * RESOLUTION));
     }
     if (note.length && note.found !== 'end') {
-      note.timeEnd += ((((note.index + note.length) - currentIndex) * 60) / (currentBpm * 192));
+      note.timeEnd += ((((note.index + note.length) - currentIndex) * 60) / (currentBpm * RESOLUTION));
     }
   });
 
   svs.forEach(sv => {
     if (!sv.found) {
       sv.found = true;
-      sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * 192));
+      sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * RESOLUTION));
 
       if (sv.resetBPM) {
         timingPoints += `\n${sv.time * 1000},${1000/(currentBpm/60)},4,1,0,50,1,0`;

@@ -1,0 +1,169 @@
+<html>
+<head>
+  <title>.qua to .chart, we're going too far</title>
+</head>
+<body>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js" integrity="sha512-CSBhVREyzHAjAFfBlIBakjoRUKp5h7VSweP0InR/pAJyptH7peuhCsqAI/snV+TwZmXZqoUklpXp6R6wMnYf5Q==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+const MIN_MULT = 0.0001;
+// Most likely mp3 overhead idk
+var DUMB_OFFSET = 0;
+
+const convert = source => {
+  const data = jsyaml.load(source);
+
+  const bpms = data.TimingPoints;
+  const svs = data.SliderVelocities;
+  const times = [];
+  for (const note of data.HitObjects) {
+    if (note.EndTime) {
+      const ref = { time: note.StartTime, note: note.Lane };
+      times.push(ref);
+      times.push({ isEnd: true, time: note.EndTime, note: note.Lane, ref });
+    } else {
+      times.push({ time: note.StartTime, note: note.Lane });
+    }
+  }
+
+  const RESOLUTION = 384;
+  let leftoverTimes = [];
+  let leftoverSvs = [];
+  let leftoverBpms = [];
+
+  const synctrack = [];
+  const notes = [];
+  
+  let time = bpms[0].StartTime;
+  const startTime = time;
+  // Skip the first measure, assume the constant BPM from there
+  // "24" is the 1/32 interval
+  let bpm = bpms[0].Bpm;
+  let index = RESOLUTION * 2;
+  let MARGIN = 2; // milliseconds
+  const cycle = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 5, 10, 20, 40, 80, 7, 14, 28, 56, 9, 18, 36, 72, 11, 22, 44, 88, 13, 26, 52, 15, 30, 60, 128, 192, 256, 192*2, 512, 1024, 1024];
+  while ((bpms.length || times.length || svs.length || leftoverBpms.length || leftoverTimes.length || leftoverSvs.length) && cycle.length) {
+    if (cycle.length == 1) MARGIN = 5; // Last resort snapping
+    const precision = Math.round((RESOLUTION*4) / cycle[0]);
+
+    while (times.length && time >= times[0].time - MARGIN) {
+      const n = times.shift();
+      if (time - n.time < MARGIN) {
+        const { isEnd, note, end, ref, noteRef } = n;
+        
+        if (!isEnd) {
+          if (noteRef) {
+            noteRef.index = index;
+            if (noteRef.end) {
+              noteRef.length = noteRef.end - index;
+            }
+          } else {
+            n.noteRef = { index, note, length: 0 };
+            notes.push(n.noteRef);
+          }
+        } else {
+          if (ref.noteRef) {
+            if (ref.noteRef.index) {
+              ref.noteRef.length = index - ref.noteRef.index;
+            } else {
+              ref.noteRef.end = index;
+            }
+          } else {
+            ref.noteRef = { note, end: index };
+            notes.push(ref.noteRef);
+          }
+        }
+      } else {
+        leftoverTimes.push(n);
+      }
+    }
+
+    while (bpms.length && time >= bpms[0].StartTime - MARGIN) {
+      const next = bpms.shift();
+      if (time - next.StartTime < MARGIN) {
+        synctrack.push({ index, bpm: next.Bpm });
+      } else {
+        leftoverBpms.push(next);
+      }
+    }
+
+    while (svs.length && time >= svs[0].StartTime - MARGIN) {
+      const next = svs.shift();
+      if (time - next.StartTime < MARGIN) {
+        notes.push({ index, event: `sv:${next.Multiplier || 0}` });
+      } else {
+        leftoverSvs.push(next);
+      }
+    }
+
+    // time += <index delta> * 60 / (bpm * resolution)... but that's in seconds, so *1000
+    time += (precision * 60000) / (bpm * RESOLUTION);
+    index += precision;
+
+    if (!times.length && !bpms.length && !svs.length) {
+      times.push(...leftoverTimes);
+      bpms.push(...leftoverBpms);
+      svs.push(...leftoverSvs);
+      leftoverTimes = [];
+      leftoverSvs = [];
+      leftoverBpms = [];
+      cycle.shift();
+      index = RESOLUTION * 2;
+      time = startTime;
+    }
+  }
+  document.getElementById('log').innerHTML = `debug: last cycle:${cycle[0]} times left:${times.length} bpms left:${bpms.length} svs left:${svs.length}`;
+
+  let txt = `[Song]
+{
+  Offset = 0
+  Resolution = ${RESOLUTION}
+  Player2 = bass
+  Difficulty = 0
+  PreviewStart = 0
+  PreviewEnd = 0
+  Genre = "rock"
+  MediaType = "cd"
+  MusicStream = "audio.mp3"
+}
+[SyncTrack]
+{
+  0 = TS 2
+  0 = B 165671
+  ${RESOLUTION*2} = TS 4
+${synctrack.map(({ index, bpm }) => `  ${index} = B ${bpm*1000}`).join('\n')}
+}
+[Events]
+{
+}  
+[ExpertDrums]
+{
+`;
+  txt += notes.map(({ note, index, event, length }) => event ? `  ${index} = E ${event}` : `  ${index} = N ${note} ${length}`).join("\n");
+  txt += "\n}";
+
+  return txt;
+};
+</script>
+.qua file <input type="file" id="chart" /><br />
+<br />
+<div id="log"></div>
+<br /><br />
+<a id="result" download="notes.chart" target="_blank">... Load something up there will you ...</a><br />
+<textarea style="width:800px;height:500px" id="preview" placeholder="Result will appear below"></textarea>
+
+<script>
+  document.getElementById("chart").addEventListener('change', $event => {
+    const fr = new FileReader();
+    fr.addEventListener('loadend', () => {
+      const converted = convert(fr.result);
+      const blob = URL.createObjectURL(new Blob([converted], { type: 'application/chart' }));
+      const link = document.getElementById('result');
+      link.href = blob;
+      link.innerHTML = 'Click to download';
+      document.getElementById('preview').value = converted;
+    });
+    fr.readAsText($event.target.files[0]);
+  });
+</script>
+</body>
+</html>
