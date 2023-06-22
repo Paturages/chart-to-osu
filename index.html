@@ -11,7 +11,7 @@ html, body {
 <script>
 const MIN_MULT = 0.0001;
 // Most likely mp3 overhead idk
-var DUMB_OFFSET = -0.017;
+var DUMB_OFFSET = -0.023;
 var ONE_KEY = false;
 
 const generateBezier = (p1, p2, p3, p4) => t => {
@@ -290,8 +290,8 @@ There's also a <code>sv:reset:0.5</code> macro that puts a 10000 bpm/10x sv, the
 
 <br />
 .chart file <input type="file" id="chart" /><br />
-Offset (ms) if necessary <input type="number" id="offset" value="-17" /><br />
-<small>(the offset is usually -17ms just like quaver because osu! treats mp3s differently)</small><br />
+Offset (ms) if necessary <input type="number" id="offset" value="-23" /><br />
+<small>(the offset is usually -23ms just like quaver because osu! treats mp3s differently)</small><br />
 <label>1K output (all notes to 1 lane)<input type="checkbox" id="one_key" /></label>
 <br /><br /><br />
 <textarea style="width:800px;height:500px" id="result" placeholder="Timing points and notes will appear below:

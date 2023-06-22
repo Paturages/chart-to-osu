@@ -21,7 +21,7 @@ const convert = source => {
     if (value < 0) {
       svs.push({ value: Math.round(10000 / (-value)) / 100, ms: +ms });
     } else {
-      bpms.push({ bpm: Math.round(60000 / (+value)), ms: +ms });
+      bpms.push({ bpm: Math.round(6000000 / (+value)) / 100, ms: +ms });
     }
   });
 
