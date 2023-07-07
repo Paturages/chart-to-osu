@@ -8,6 +8,14 @@ const MIN_MULT = 0.0001;
 // Most likely mp3 overhead idk
 var DUMB_OFFSET = 0;
 
+const toHumanTime = (totalSeconds, showMilliseconds) => {
+  const minutes = String(Math.floor(totalSeconds / 60));
+  const seconds = String(Math.floor(totalSeconds % 60)).padStart(2, "0");
+  if (!showMilliseconds) return `${minutes}:${seconds}`;
+  const milliseconds = String(Math.floor((totalSeconds % 1) * 1000)).padStart(3, "0");
+  return `${minutes}:${seconds}.${milliseconds}`;
+}
+
 const convert = source => {
   const lines = source.split("\n");
   const timingPointsIndex = lines.findIndex(line => line.includes("[TimingPoints]"));
@@ -67,17 +75,109 @@ const convert = source => {
   let leftoverTimes = [];
   let leftoverSvs = [];
   let leftoverBpms = [];
-  const synctrack = [];
   const notes = [];
+  
+  // Leave the entire 2 beats empty in the .chart and start scanning the .osu from the first timing point
+  // (assuming 192 resolution, 24 units correspond to a 1/32 snap, so 16 * 1/32 makes a 1/2 gap)
+  let index = 24 * 16; // = 384
   let time = bpms[0].ms;
-  const startTime = time;
-  // Skip the first measure, assume the constant BPM from there
-  // "24" is the 1/32 interval
   let bpm = bpms[0].bpm;
-  let index = 384;
+  const startTime = time;
+  const startBpm = bpm;
+  
+  // Calculating the first .chart BPM comes down to figuring out which BPM allows a 1/2 gap to reach the
+  // first timing point's timestamp.
+  // If   time = index * 60000 / (bpm * resolution),
+  // then bpm  = index * 60000 / (time * resolution)
+
+  // We add 23 ms to the time because of osu vs other editors offset difference
+  // This only applies to the first BPM event, which properly shifts the
+  // chart 23 ms forward as a result.
+  const firstBpm = index * 60000 / ((time + 23) * 192);
+  bpms.shift(); // the first bpm event has been handled above so we can skip it
+  const synctrack = [{ time, index, bpm }]; // accordingly include it in the final synctrack
+
   let MARGIN = 2; // milliseconds
-  const cycle = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 5, 10, 20, 40, 80, 7, 14, 28, 56, 9, 18, 36, 72, 11, 22, 44, 88, 13, 26, 52, 15, 30, 60, 128, 192, 256, 192*2, 512];
-  while ((times.length || bpms.length || svs.length || leftoverTimes.length || leftoverSvs.length || leftoverBpms.length) && cycle.length) {
+  const cycle = [
+    // Regular cycle
+    1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96,
+    // Esoteric snaps
+    5, 10, 20, 40, 80,
+    7, 14, 28, 56,
+    9, 18, 36, 72,
+    11, 22, 44, 88,
+    13, 26, 52,
+    15, 30, 60,
+    // At this point these are just fallbacks
+    128, 192, 256, 192*2, 512
+  ];
+
+  // We have to process the BPMs before the notes because we have to know at which indexes the BPM changes occur
+  // Most sane people would put timing points on main beats/snaps, so we don't do as much cycle bullshit here...
+  // Well, more like we *can't* do the cycle bullshit here because if we go past a BPM event, we'd have to
+  // recalculate the overflow snap according to the BPM we've gone past, and then we'd also have to keep track
+  // of the previously computed BPMs. All around just a huge mess.
+
+  // So if there are maps that do otherwise, you're on your own, they're not trivially convertible.
+  // Also the mapper is terrible and should be shamed and stoned.
+  const svBpms = [];
+  const BPM_MARGIN = 5; // We can afford to be more lenient on timing points since we assume on-beat changes
+  while (bpms.length) {
+    const precision = Math.round((192 * 4) / 16); // scanning by 1/16s should be enough innit
+
+    while (bpms.length && time >= bpms[0].ms - BPM_MARGIN) {
+      const next = bpms.shift();
+      console.log(toHumanTime(time / 1000, true), time, `${next.bpm} BPM`, toHumanTime(next.ms / 1000, true), next.ms);
+      if (next.bpm > 1000) {
+        // Trying to account for BPMs used for SV effects
+        svBpms.push(next);
+      } else {
+        if (time - next.ms < BPM_MARGIN) {
+          // This should be the case where the bpm event is right where it should be...
+          // ...except due to lack of precision, errors will inevitably happen,
+          // but we can't ignore them because otherwise they would pile up and mess up calculations,
+          // so we have to correct them ourselves.
+          const previous = synctrack.slice(-1)[0];
+          if (index - previous.index < 24 * 16) {
+            // If the previous timing point is close enough to the current one, tamper with that one
+            const actualBpm = (index - previous.index) * 60000 / ((next.ms - previous.time) * 192);
+            synctrack[synctrack.length - 1].bpm = actualBpm;
+          } else if (Math.abs(time - next.ms) > 0) {
+            // Else, insert a BPM change on the beat before to compensate
+            const oneBeatIndex = 24 * 8;
+            const compensationBpmIndex = index - oneBeatIndex;
+            const compensationBpmTime = time - ((oneBeatIndex * 60000) / (bpm * 192));
+            const compensationBpmValue = oneBeatIndex * 60000 / ((next.ms - compensationBpmTime) * 192);
+            synctrack.push({ time: compensationBpmTime, index: compensationBpmIndex, bpm: compensationBpmValue });
+          }
+          synctrack.push({ time, index, bpm: next.bpm });
+          bpm = next.bpm;
+          time = next.ms;
+        } else {
+          // This is the case where we've gone past a bpm event,
+          // so there's a portion of snap we have to recalculate according to the new bpm...
+          leftoverBpms.push(next);
+          bpm = next.bpm;
+        }
+      }
+    }    
+
+    // time += <index delta> * 60 / (bpm * resolution)... but that's in seconds, so *1000
+    time += (precision * 60000) / (bpm * 192);
+    index += precision;
+  }
+  if (leftoverBpms.length) {
+    console.log("Those BPM events are not on 1/16 snaps and I ain't gonna do anything about it:");
+    console.log(leftoverBpms.map(({ bpm, ms }) => `${toHumanTime(ms/1000, true).padStart(10, ' ')} (${ms}ms) BPM = ${bpm}`).join('\n'));
+  }
+
+  time = startTime;
+  bpm = startBpm;
+  let synctrackCycle = synctrack.slice(1);
+  leftoverTimes = [];
+  leftoverSvs = [];
+  leftoverBpms = [];
+  while ((times.length || svs.length || svBpms.length || leftoverTimes.length || leftoverSvs.length || leftoverBpms.length) && cycle.length) {
     if (cycle.length == 1) MARGIN = 5; // Last resort snapping
     const precision = Math.round((192*4) / cycle[0]);
 
@@ -113,15 +213,11 @@ const convert = source => {
         leftoverTimes.push(next);
       }
     }
-
-    while (bpms.length && time >= bpms[0].ms - MARGIN) {
-      const next = bpms.shift();
+    
+    while (svBpms.length && time >= svBpms[0].ms - MARGIN) {
+      const next = svBpms.shift();
       if (time - next.ms < MARGIN) {
-        if (synctrack.length) {
-          notes.push({ index, event: `sv:bpm:${next.bpm}` });
-        } else {
-          synctrack.push({ index, bpm: next.bpm });
-        }
+        notes.push({ index, event: `sv:bpm:${next.bpm}` });
       } else {
         leftoverBpms.push(next);
       }
@@ -139,17 +235,30 @@ const convert = source => {
     // time += <index delta> * 60 / (bpm * resolution)... but that's in seconds, so *1000
     time += (precision * 60000) / (bpm * 192);
     index += precision;
+    if (synctrackCycle.length && index > synctrackCycle[0].index) {
+      // If a snap goes over a BPM event's index,
+      // we have to recalculate the index portion that went over on the new BPM
+      const next = synctrackCycle.shift();
+      const indexToRecalculate = index - next.index;
+      // Remove time under invalid (previous) BPM
+      time -= (indexToRecalculate * 60000) / (bpm * 192);
+      // Add time under valid (next) BPM
+      bpm = next.bpm;
+      time += (indexToRecalculate * 60000) / (bpm * 192);
+    }
 
-    if (!times.length && !bpms.length && !svs.length) {
+    if (!times.length && !svBpms.length && !svs.length) {
       times.push(...leftoverTimes);
       bpms.push(...leftoverBpms);
       svs.push(...leftoverSvs);
       leftoverTimes = [];
       leftoverSvs = [];
       leftoverBpms = [];
+      synctrackCycle = synctrack.slice(1);
       cycle.shift();
       index = 384;
       time = startTime;
+      bpm = startBpm;
     }
   }
   document.getElementById('log').innerHTML = `debug: last cycle:${cycle[0]} times left:${times.length} bpms left:${bpms.length} svs left:${svs.length}`;
@@ -169,9 +278,9 @@ const convert = source => {
 [SyncTrack]
 {
   0 = TS 2
-  0 = B 165671
+  0 = B ${Math.round(firstBpm * 1000)}
   384 = TS 4
-${synctrack.map(({ index, bpm }) => `  ${index} = B ${bpm*1000}`).join('\n')}
+${synctrack.map(({ index, bpm }) => `  ${index} = B ${Math.round(bpm * 1000)}`).join('\n')}
 }
 [Events]
 {
