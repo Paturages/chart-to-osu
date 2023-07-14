@@ -27,9 +27,9 @@ const convert = source => {
     const [ms, value] = line.split(',');
     if (value == null) return;
     if (value < 0) {
-      svs.push({ value: Math.round(10000 / (-value)) / 100, ms: +ms });
+      svs.push({ value: Math.round(100000 / (-value)) / 1000, ms: +ms });
     } else {
-      bpms.push({ bpm: Math.round(6000000 / (+value)) / 100, ms: +ms });
+      bpms.push({ bpm: Math.round(60000000 / (+value)) / 1000, ms: +ms });
     }
   });
 
@@ -132,33 +132,26 @@ const convert = source => {
         // Trying to account for BPMs used for SV effects
         svBpms.push(next);
       } else {
-        if (time - next.ms < BPM_MARGIN) {
-          // This should be the case where the bpm event is right where it should be...
-          // ...except due to lack of precision, errors will inevitably happen,
-          // but we can't ignore them because otherwise they would pile up and mess up calculations,
-          // so we have to correct them ourselves.
-          const previous = synctrack.slice(-1)[0];
-          if (index - previous.index < 24 * 16) {
-            // If the previous timing point is close enough to the current one, tamper with that one
-            const actualBpm = (index - previous.index) * 60000 / ((next.ms - previous.time) * 192);
-            synctrack[synctrack.length - 1].bpm = actualBpm;
-          } else if (Math.abs(time - next.ms) > 0) {
-            // Else, insert a BPM change on the beat before to compensate
-            const oneBeatIndex = 24 * 8;
-            const compensationBpmIndex = index - oneBeatIndex;
-            const compensationBpmTime = time - ((oneBeatIndex * 60000) / (bpm * 192));
-            const compensationBpmValue = oneBeatIndex * 60000 / ((next.ms - compensationBpmTime) * 192);
-            synctrack.push({ time: compensationBpmTime, index: compensationBpmIndex, bpm: compensationBpmValue });
-          }
-          synctrack.push({ time, index, bpm: next.bpm });
-          bpm = next.bpm;
-          time = next.ms;
-        } else {
-          // This is the case where we've gone past a bpm event,
-          // so there's a portion of snap we have to recalculate according to the new bpm...
-          leftoverBpms.push(next);
-          bpm = next.bpm;
+        // This should be the case where the bpm event is right where it should be...
+        // ...except due to lack of precision, errors will inevitably happen,
+        // but we can't ignore them because otherwise they would pile up and mess up calculations,
+        // so we have to correct them ourselves.
+        const previous = synctrack.slice(-1)[0];
+        if (index - previous.index < 24 * 16) {
+          // If the previous timing point is close enough to the current one, tamper with that one
+          const actualBpm = (index - previous.index) * 60000 / ((next.ms - previous.time) * 192);
+          synctrack[synctrack.length - 1].bpm = actualBpm;
+        } else if (Math.abs(time - next.ms) > 0) {
+          // Else, insert a BPM change on the beat before to compensate
+          const oneBeatIndex = 24 * 8;
+          const compensationBpmIndex = index - oneBeatIndex;
+          const compensationBpmTime = time - ((oneBeatIndex * 60000) / (bpm * 192));
+          const compensationBpmValue = oneBeatIndex * 60000 / ((next.ms - compensationBpmTime) * 192);
+          synctrack.push({ time: compensationBpmTime, index: compensationBpmIndex, bpm: compensationBpmValue });
         }
+        synctrack.push({ time, index, bpm: next.bpm });
+        bpm = next.bpm;
+        time = next.ms;
       }
     }    
 
@@ -288,7 +281,9 @@ ${synctrack.map(({ index, bpm }) => `  ${index} = B ${Math.round(bpm * 1000)}`).
 [ExpertDrums]
 {
 `;
-  txt += notes.map(({ note, index, event, length }) => event ? `  ${index} = E ${event}` : `  ${index} = N ${note} ${length}`).join("\n");
+  txt += notes
+    .sort((a, b) => a.index - b.index)
+    .map(({ note, index, event, length }) => event ? `  ${index} = E ${event}` : `  ${index} = N ${note} ${length}`).join("\n");
   txt += "\n}";
 
   return txt;

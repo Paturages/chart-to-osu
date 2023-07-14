@@ -1,0 +1,184 @@
+<html>
+
+<head>
+  <title>.sm to .chart, what the hell am I doing</title>
+</head>
+
+<body>
+  <script>
+    const MIN_MULT = 0.0001;
+    // Most likely mp3 overhead idk
+    var DUMB_OFFSET = 0;
+
+    const toHumanTime = (totalSeconds, showMilliseconds) => {
+      const minutes = String(Math.floor(totalSeconds / 60));
+      const seconds = String(Math.floor(totalSeconds % 60)).padStart(2, "0");
+      if (!showMilliseconds) return `${minutes}:${seconds}`;
+      const milliseconds = String(Math.floor((totalSeconds % 1) * 1000)).padStart(3, "0");
+      return `${minutes}:${seconds}.${milliseconds}`;
+    }
+
+    const convert = source => {
+      const lines = source.split("\n");
+
+      // Offset is in seconds (*1000 for milliseconds)
+      // The value is negative but it in fact means positive offset lol
+      const offset = -Number(
+        lines
+          .find(line => line.trim().startsWith('#OFFSET:'))
+          .split(':')[1]
+          .replace(';', '')
+      ) * 1000;
+      // BPMS can either be on one line or on several lines...
+      const bpmTextStart = source.indexOf('#BPMS:');
+      const bpmTextEnd = source.indexOf(';', bpmTextStart);
+      const bpms = source.slice(bpmTextStart + '#BPMS:'.length, bpmTextEnd)
+        .split(',')
+        .map(entry => {
+          const [beat, value] = entry.trim().split('=');
+          return { beat: Number(beat), bpm: Number(value.replace(';', '')) };
+        });
+
+      // Calculating the first .chart BPM comes down to figuring out
+      // which BPM allows one beat to reach the offset time + one beat in the first bpm
+      // If   time = index * 60000 / (bpm * resolution),
+      // then bpm  = index * 60000 / (time * resolution)
+      const startIndex = 192; // One beat
+      const firstBpm = startIndex * 60000 / (offset * 192);
+      
+      // Measures are 4/4 by default (I think)
+      // (1 measure in .chart at 192 resolution = 768)
+      // Each measure has X values, and the subdivision is 1/X
+
+      // The measures start after the #NOTES and
+      // it's the first line that doesn't start with a space
+      // Also take into account the selected difficulty
+      const diffValue = document.getElementById('diff').value;
+      console.log(diffValue);
+      lineNumber = lines.findIndex(line => line.trim().startsWith('#NOTES:'));
+      if (diffValue) {
+        lineNumber += 1 + lines.slice(lineNumber+1).findIndex(line => line.includes(document.getElementById('diff').value));
+      }
+      const endLineNumber = lineNumber + lines.slice(lineNumber).findIndex(line => line.trim() == ';');
+      lineNumber += 1 + lines.slice(lineNumber+1).findIndex(line => !line.startsWith(' '));
+      const measures = [];
+      let currentMeasure = [];
+      lines.slice(lineNumber, endLineNumber).forEach(rawLine => {
+        const line = rawLine.trim();
+        if (line === ',') {
+          measures.push(currentMeasure);
+          currentMeasure = [];
+          return;
+        }
+        const [note1, note2, note3, note4] = line.split('');
+        if (!+note1 && !+note2 && !+note3 && !+note4) {
+          currentMeasure.push(null);
+          return;
+        }
+        currentMeasure.push([+note1, +note2, +note3, +note4]);
+      });
+      measures.push(currentMeasure); // push last measure
+
+      // Build the SyncTrack and the notes
+      const synctrack = bpms.map(({ beat, bpm }) => ({
+        // One beat = 192 units (the resolution)
+        index: startIndex + Math.round(192 * beat),
+        bpm
+      }));
+      const notes = [];
+      const currentLNs = [];
+      measures.forEach((measure, measureNumber) => {
+        // 1 = single note
+        // 2 = long note start
+        // 3 = long note end
+        // M = mine, but those got NaN'ed through type coersion, so they're equivalent to 0
+        measure.forEach((bar, measureIndex) => {
+          if (!bar) return;
+          const measurePosition = measureIndex / measure.length;
+          bar.forEach((note, noteIndex) => {
+            if (!note) return;
+            const index = startIndex + Math.round(768 * (measureNumber + measurePosition));
+            if (note === 3) {
+              currentLNs[noteIndex].length = index - currentLNs[noteIndex].index;
+            } else {
+              const noteObj = { note: noteIndex+1, index, length: 0 };
+              notes.push(noteObj);
+              if (note === 2) currentLNs[noteIndex] = noteObj;
+            }
+          });
+        });
+      });
+
+      let txt = `[Song]
+{
+  Offset = 0
+  Resolution = 192
+  Player2 = bass
+  Difficulty = 0
+  PreviewStart = 0
+  PreviewEnd = 0
+  Genre = "rock"
+  MediaType = "cd"
+  MusicStream = "audio.mp3"
+}
+[SyncTrack]
+{
+  0 = TS 1
+  0 = B ${Math.round(firstBpm * 1000)}
+  192 = TS 4
+${synctrack.map(({ index, bpm }) => `  ${index} = B ${Math.round(bpm * 1000)}`).join('\n')}
+}
+[Events]
+{
+}  
+[ExpertDrums]
+{
+`;
+      txt += notes
+        .sort((a, b) => a.index - b.index)
+        .map(({ note, index, event, length }) => event ? `  ${index} = E ${event}` : `  ${index} = N ${note} ${length}`).join("\n");
+      txt += "\n}";
+      
+      const blob = URL.createObjectURL(new Blob([txt], { type: 'application/chart' }));
+      const link = document.getElementById('result');
+      link.href = blob;
+      link.innerHTML = 'Click to download';
+      document.getElementById('preview').value = txt;
+
+      return txt;
+    };
+  </script>
+  .sm file <input type="file" id="chart" /><br />
+  <br />
+  <div id="log"></div>
+  <br /><br />
+  <a id="result" download="notes.chart" target="_blank">... Load something up there will you ...</a><br />
+  <select id="diff" onchange="convert(source)">
+    <option value="">Select difficulty...</option>
+  </select><br />
+  <textarea style="width:800px;height:500px" id="preview" placeholder="Result will appear below"></textarea>
+
+  <script>
+    var source = '';
+    document.getElementById("chart").addEventListener('change', $event => {
+      const fr = new FileReader();
+      fr.addEventListener('loadend', () => {
+        source = fr.result;
+        const converted = convert(fr.result);
+
+        // Fill in the diffs
+        const lines = fr.result.split('\n');
+        const diffs = [];
+        while (lines.length) {
+          const line = lines.shift();
+          if (!line.startsWith('//---------------dance-single')) continue;
+          diffs.push(lines[3].trim().slice(0, -1));
+        }
+        document.getElementById('diff').innerHTML = `${diffs.map(diff => `<option value="${diff}">${diff}</option>`).join('')}`;
+      });
+      fr.readAsText($event.target.files[0]);
+    });
+  </script>
+</body>
+
+</html>
