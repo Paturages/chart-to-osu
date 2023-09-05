@@ -33,18 +33,19 @@ const getSV = (line, sps) => {
       multiplier: Math.max(+query, MIN_MULT)
     }];
   }
-  const [fn, value, value2] = query.split(':');
+  const [fn, value, value2, value3] = query.split(':');
 
   if (fn === 'bpm') {
+    const offset = (+value3 || 0) / 1000;
     const payload = [
       {
-        time: DUMB_OFFSET,
+        time: DUMB_OFFSET + offset,
         index: +index,
         bpm: +value
       }
     ];
     if (+value2 >= 0) payload.push({
-      time: DUMB_OFFSET,
+      time: DUMB_OFFSET + offset,
       index: +index,
       multiplier: Math.max(+value2, MIN_MULT)
     });
@@ -52,15 +53,16 @@ const getSV = (line, sps) => {
   }
 
   if (fn === 'resetbpm') {
+    const offset = (+value2 || 0) / 1000;
     const payload = [
       {
-        time: DUMB_OFFSET,
+        time: DUMB_OFFSET + offset,
         index: +index,
         resetBPM: true
       }
     ];
     if (+value >= 0) payload.push({
-      time: DUMB_OFFSET,
+      time: DUMB_OFFSET + offset,
       index: +index,
       multiplier: Math.max(+value, MIN_MULT)
     });
@@ -69,30 +71,46 @@ const getSV = (line, sps) => {
 
   // Reset: 1e100 bpm + 10x for 1 ms, then reset
   if (fn === 'reset') {
+    const offset = (+value2 || 0) / 1000;
     return [
       {
-        time: DUMB_OFFSET,
+        time: DUMB_OFFSET + offset,
         index: +index,
         bpm: 1e100
       },
       {
-        time: DUMB_OFFSET,
+        time: DUMB_OFFSET + offset,
         index: +index,
         multiplier: 10
       },
       {
-        time: DUMB_OFFSET + 0.00001,
+        time: DUMB_OFFSET + 0.001 + offset,
         index: +index,
         resetBPM: true // bubble that in the bpm loop
       },
       {
-        time: DUMB_OFFSET + 0.00001,
+        time: DUMB_OFFSET + 0.001 + offset,
         index: +index,
         multiplier: Math.max(+value, MIN_MULT)
       }
     ];
   }
+
+  // Default: <sv value>:<offset>
+  const offset = (+value || 0) / 1000;
+  return [{
+    time: DUMB_OFFSET + offset,
+    index: +index,
+    multiplier: Math.max(+fn, MIN_MULT)
+  }];
 };
+
+const getOffset = line => {
+  const [, index, query] = line.match(/(\d+) = E offset:(.+)/) || [];
+  if (!index) return [];
+  const [offset, note] = query.split(':');
+  return [{ index, note: +note, offset: +offset }];
+}
 
 const getBPM = line => {
   const [, index, bpm1000] = line.match(/(\d+) = B (.+)/) || [];
@@ -127,6 +145,7 @@ const convert = source => {
   let txt = "";
   const notes = [];
   const svs = [];
+  const offsets = [];
   const lineRange = lines.slice(start, end);
 
   // Get the SP phrases for the SV functions
@@ -141,6 +160,7 @@ const convert = source => {
     // If it's not a note, it might be an SV event
     if (!line.includes(' = N ')) {
       svs.push(...getSV(line, sps));
+      offsets.push(...getOffset(line));
       return;
     }
     const [, index, note, length] = line.match(/(\d+) = N (\d) (\d+)/) || [];
@@ -159,6 +179,13 @@ const convert = source => {
       length: +length,
       noteType
     });
+  });
+
+  offsets.forEach(({ index, note, offset }) => {
+    const theNote = notes.find(n => n.index == index && [, 64, 192, 320, 448][note] == n.osuNote);
+    if (!theNote) return;
+    theNote.time += offset / 1000;
+    theNote.timeEnd += offset / 1000;
   });
 
 
@@ -200,13 +227,13 @@ const convert = source => {
           sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * RESOLUTION));
 
           if (sv.resetBPM) {
-            timingPoints += `\n${sv.time * 1000},${1000/(bpm/60)},4,1,0,50,1,0`;
+            timingPoints += `\n${Math.round(sv.time * 1000)},${1000/(currentBpm/60)},4,1,0,50,1,0`;
           } else if (sv.bpm) {
-            timingPoints += `\n${sv.time * 1000},${1000/(sv.bpm/60)},4,1,0,50,1,0`;
+            timingPoints += `\n${Math.round(sv.time * 1000)},${1000/(sv.bpm/60)},4,1,0,50,1,0`;
           } else {
             // Example SV timing point: 947 ,-1000,4               ,1               ,0,100          ,0,0
             //                          time value something sample something sample ? sample volume ? ?
-            timingPoints += `\n${sv.time * 1000},-${100/sv.multiplier},4,1,0,50,0,0`;
+            timingPoints += `\n${Math.round(sv.time * 1000)},-${100/sv.multiplier},4,1,0,50,0,0`;
           }
         }
       });
@@ -215,7 +242,7 @@ const convert = source => {
     currentBpm = bpm;
     // The first BPM marker is usually for offset purposes, so it isn't needed
     if (index > 0) {
-      timingPoints += `\n${time * 1000},${1000/(bpm/60)},4,1,0,50,1,0`;
+      timingPoints += `\n${Math.round(time * 1000)},${1000/(bpm/60)},4,1,0,50,1,0`;
     }
   });
 
@@ -236,13 +263,13 @@ const convert = source => {
       sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * RESOLUTION));
 
       if (sv.resetBPM) {
-        timingPoints += `\n${sv.time * 1000},${1000/(currentBpm/60)},4,1,0,50,1,0`;
+        timingPoints += `\n${Math.round(Math.round(sv.time * 1000))},${1000/(currentBpm/60)},4,1,0,50,1,0`;
       } else if (sv.bpm) {
-        timingPoints += `\n${sv.time * 1000},${1000/(sv.bpm/60)},4,1,0,50,1,0`;
+        timingPoints += `\n${Math.round(Math.round(sv.time * 1000))},${1000/(sv.bpm/60)},4,1,0,50,1,0`;
       } else {
         // Example SV timing point: 947 ,-1000,4               ,1               ,0,100          ,0,0
         //                          time value something sample something sample ? sample volume ? ?
-        timingPoints += `\n${sv.time * 1000},-${100/sv.multiplier},4,1,0,50,0,0`;
+        timingPoints += `\n${Math.round(Math.round(sv.time * 1000))},-${100/sv.multiplier},4,1,0,50,0,0`;
       }
     }
   });
@@ -253,7 +280,7 @@ const convert = source => {
     timeEnd,
     noteType
   }) => {
-    txt += `\n${osuNote},192,${(time * 1000)},${noteType},0,${timeEnd > 0 ? `${(timeEnd * 1000)}:` : ''}0:0:0:0`;
+    txt += `\n${osuNote},192,${(Math.round(time * 1000))},${noteType},0,${timeEnd > 0 ? `${(Math.round(timeEnd * 1000))}:` : ''}0:0:0:0`;
   });
 
   return `[TimingPoints]${timingPoints}\n\n[HitObjects]${txt}`;
