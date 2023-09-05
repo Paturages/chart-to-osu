@@ -33,12 +33,7 @@ const convert = source => {
     }
   });
 
-  // Hypothetically, .osu "indexes" are their positions in milliseconds (arguably terrible)
-  // The cheap strategy (for now) is to go by PRECISION, compute time and grab the ones that match
-
-  // Notes:
   // 64 = 1, 192 = 2, 320 = 3, 448 = 4
-
   // in the last x:x:x:x:x: group, the first number is the timestamp where the sustain should stop
   const osuNotes = {};
   lines.slice(hitObjectsIndex).forEach(line => {
@@ -122,13 +117,14 @@ const convert = source => {
   // Also the mapper is terrible and should be shamed and stoned.
   const svBpms = [];
   const BPM_MARGIN = 5; // We can afford to be more lenient on timing points since we assume on-beat changes
+  const noBpmChanges = !!document.getElementById('no-bpm-changes').checked;
   while (bpms.length) {
-    const precision = Math.round((192 * 4) / 16); // scanning by 1/16s should be enough innit
+    const precision = Math.round((192 * 4) / 64);
 
     while (bpms.length && time >= bpms[0].ms - BPM_MARGIN) {
       const next = bpms.shift();
-      console.log(toHumanTime(time / 1000, true), time, `${next.bpm} BPM`, toHumanTime(next.ms / 1000, true), next.ms);
-      if (next.bpm > 1000) {
+      //console.log(toHumanTime(time / 1000, true), time, `${next.bpm} BPM`, toHumanTime(next.ms / 1000, true), next.ms);
+      if (next.bpm > 1000 || noBpmChanges) {
         // Trying to account for BPMs used for SV effects
         svBpms.push(next);
       } else {
@@ -164,6 +160,7 @@ const convert = source => {
     console.log(leftoverBpms.map(({ bpm, ms }) => `${toHumanTime(ms/1000, true).padStart(10, ' ')} (${ms}ms) BPM = ${bpm}`).join('\n'));
   }
 
+  index = 24 * 16;
   time = startTime;
   bpm = startBpm;
   let synctrackCycle = synctrack.slice(1);
@@ -176,7 +173,7 @@ const convert = source => {
 
     while (times.length && time >= times[0] - MARGIN) {
       const next = times.shift();
-      if (time - next < MARGIN) {
+      if (Math.abs(time - next) < MARGIN) {
         for (const n of osuNotes[next]) {
           const { isEnd, note, end, ref, noteRef } = n;
           if (!isEnd) {
@@ -209,7 +206,7 @@ const convert = source => {
     
     while (svBpms.length && time >= svBpms[0].ms - MARGIN) {
       const next = svBpms.shift();
-      if (time - next.ms < MARGIN) {
+      if (Math.abs(time - next.ms) < MARGIN) {
         notes.push({ index, event: `sv:bpm:${next.bpm}` });
       } else {
         leftoverBpms.push(next);
@@ -218,7 +215,7 @@ const convert = source => {
 
     while (svs.length && time >= svs[0].ms - MARGIN) {
       const next = svs.shift();
-      if (time - next.ms < MARGIN) {
+      if (Math.abs(time - next.ms) < MARGIN) {
         notes.push({ index, event: `sv:${next.value}` });
       } else {
         leftoverSvs.push(next);
@@ -242,7 +239,7 @@ const convert = source => {
 
     if (!times.length && !svBpms.length && !svs.length) {
       times.push(...leftoverTimes);
-      bpms.push(...leftoverBpms);
+      svBpms.push(...leftoverBpms);
       svs.push(...leftoverSvs);
       leftoverTimes = [];
       leftoverSvs = [];
@@ -254,7 +251,7 @@ const convert = source => {
       bpm = startBpm;
     }
   }
-  document.getElementById('log').innerHTML = `debug: last cycle:${cycle[0]} times left:${times.length} bpms left:${bpms.length} svs left:${svs.length}`;
+  document.getElementById('log').innerHTML = `debug: last cycle:${cycle[0]} times left:${times.length} bpms left:${svBpms.length} svs left:${svs.length}`;
 
   let txt = `[Song]
 {
@@ -290,6 +287,7 @@ ${synctrack.map(({ index, bpm }) => `  ${index} = B ${Math.round(bpm * 1000)}`).
 };
 </script>
 .osu file <input type="file" id="chart" /><br />
+<label>Only include first BPM, put other BPM changes as SV events <input type="checkbox" id="no-bpm-changes" /></label>
 <br />
 <div id="log"></div>
 <br /><br />
