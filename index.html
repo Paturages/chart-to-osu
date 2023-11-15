@@ -184,7 +184,13 @@ const convert = source => {
   });
 
   offsets.forEach(({ index, note, offset }) => {
-    const theNote = notes.find(n => n.index == index && [, 64, 192, 320, 448][note] == n.osuNote);
+    const theNote = notes.find(n => {
+      if (n.index != index) return false;
+      // 1K edge case: for almost-stacked note gimmicks,
+      // just find the first note at that timestamp
+      if (ONE_KEY) return true;
+      return [, 64, 192, 320, 448][note] == n.osuNote;
+    });
     if (!theNote) return;
     theNote.time += offset / 1000;
     theNote.timeEnd += offset / 1000;
