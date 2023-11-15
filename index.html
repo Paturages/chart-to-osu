@@ -127,6 +127,8 @@ const convert = source => {
   // const start = lines.findIndex(x => x.match(/EasyDrums/));
 
   const end = lines.slice(start).findIndex(x => x.match(/}/)) + start;
+  // Disable rounding in case unsnaps get annoying
+  const round = !!document.getElementById('rounding').checked ? (x => x) : Math.round;
 
   // Compute BPMs and timestamps
   const bpms = [];
@@ -227,13 +229,13 @@ const convert = source => {
           sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * RESOLUTION));
 
           if (sv.resetBPM) {
-            timingPoints += `\n${Math.floor(sv.time * 1000)},${1000/(currentBpm/60)},4,1,0,50,1,0`;
+            timingPoints += `\n${round(sv.time * 1000)},${1000/(currentBpm/60)},4,1,0,50,1,0`;
           } else if (sv.bpm) {
-            timingPoints += `\n${Math.floor(sv.time * 1000)},${1000/(sv.bpm/60)},4,1,0,50,1,0`;
+            timingPoints += `\n${round(sv.time * 1000)},${1000/(sv.bpm/60)},4,1,0,50,1,0`;
           } else {
             // Example SV timing point: 947 ,-1000,4               ,1               ,0,100          ,0,0
             //                          time value something sample something sample ? sample volume ? ?
-            timingPoints += `\n${Math.floor(sv.time * 1000)},-${100/sv.multiplier},4,1,0,50,0,0`;
+            timingPoints += `\n${round(sv.time * 1000)},-${100/sv.multiplier},4,1,0,50,0,0`;
           }
         }
       });
@@ -242,7 +244,7 @@ const convert = source => {
     currentBpm = bpm;
     // The first BPM marker is usually for offset purposes, so it isn't needed
     if (index > 0) {
-      timingPoints += `\n${Math.floor(time * 1000)},${1000/(bpm/60)},4,1,0,50,1,0`;
+      timingPoints += `\n${round(time * 1000)},${1000/(bpm/60)},4,1,0,50,1,0`;
     }
   });
 
@@ -263,13 +265,13 @@ const convert = source => {
       sv.time += (((sv.index - currentIndex) * 60) / (currentBpm * RESOLUTION));
 
       if (sv.resetBPM) {
-        timingPoints += `\n${Math.floor(sv.time * 1000)},${1000/(currentBpm/60)},4,1,0,50,1,0`;
+        timingPoints += `\n${round(sv.time * 1000)},${1000/(currentBpm/60)},4,1,0,50,1,0`;
       } else if (sv.bpm) {
-        timingPoints += `\n${Math.floor(sv.time * 1000)},${1000/(sv.bpm/60)},4,1,0,50,1,0`;
+        timingPoints += `\n${round(sv.time * 1000)},${1000/(sv.bpm/60)},4,1,0,50,1,0`;
       } else {
         // Example SV timing point: 947 ,-1000,4               ,1               ,0,100          ,0,0
         //                          time value something sample something sample ? sample volume ? ?
-        timingPoints += `\n${Math.floor(sv.time * 1000)},-${100/sv.multiplier},4,1,0,50,0,0`;
+        timingPoints += `\n${round(sv.time * 1000)},-${100/sv.multiplier},4,1,0,50,0,0`;
       }
     }
   });
@@ -280,7 +282,7 @@ const convert = source => {
     timeEnd,
     noteType
   }) => {
-    txt += `\n${osuNote},192,${(Math.floor(time * 1000))},${noteType},0,${timeEnd > 0 ? `${(Math.floor(timeEnd * 1000))}:` : ''}0:0:0:0`;
+    txt += `\n${osuNote},192,${(round(time * 1000))},${noteType},0,${timeEnd > 0 ? `${(round(timeEnd * 1000))}:` : ''}0:0:0:0`;
   });
 
   return `[TimingPoints]${timingPoints}\n\n[HitObjects]${txt}`;
@@ -319,7 +321,8 @@ There's also a <code>sv:reset:0.5</code> macro that puts a 10000 bpm/10x sv, the
 .chart file <input type="file" id="chart" /><br />
 Offset (ms) if necessary <input type="number" id="offset" value="-23" /><br />
 <small>(the offset is usually -23ms just like quaver because osu! treats mp3s differently)</small><br />
-<label>1K output (all notes to 1 lane)<input type="checkbox" id="one_key" /></label>
+<label>1K output (all notes to 1 lane)<input type="checkbox" id="one_key" /></label><br />
+<label>Disable rounding to nearest ms time<input type="checkbox" id="rounding" /></label><br />
 <br /><br /><br />
 <textarea style="width:800px;height:500px" id="result" placeholder="Timing points and notes will appear below:
 
