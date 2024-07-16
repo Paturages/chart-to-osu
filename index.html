@@ -118,6 +118,12 @@ const getBPM = line => {
   return [[+index, bpm1000 / 1000]];
 }
 
+const getEvent = line => {
+  const [, index] = line.match(/(\d+) = E "section (.+)"/) || [];
+  if (!index) return [];
+  return [+index];
+}
+
 const convert = source => {
   const lines = source.split("\n");
   const RESOLUTION = +lines.find(x => x.match(/Resolution/)).split(' = ')[1];
@@ -130,9 +136,11 @@ const convert = source => {
   // Disable rounding in case unsnaps get annoying
   const round = !!document.getElementById('rounding').checked ? (x => x) : Math.round;
 
-  // Compute BPMs and timestamps
+  // Compute sections (bookmarks), BPMs and timestamps
+  const sections = [];
   const bpms = [];
   lines.forEach(line => {
+    sections.push(...getEvent(line));
     bpms.push(...getBPM(line));
   });
 
@@ -148,6 +156,7 @@ const convert = source => {
   const notes = [];
   const svs = [];
   const offsets = [];
+  const bookmarks = sections.map(() => ({ time: DUMB_OFFSET }));
   const lineRange = lines.slice(start, end);
 
   // Get the SP phrases for the SV functions
@@ -245,6 +254,17 @@ const convert = source => {
           }
         }
       });
+
+      sections.forEach((sectionIndex, arrayIndex) => {
+        const bookmark = bookmarks[arrayIndex];
+
+        if (index <= sectionIndex) {
+          bookmark.time += (((index - currentIndex) * 60) / (currentBpm * RESOLUTION));
+        } else if (!bookmark.found) {
+          bookmark.found = true;
+          bookmark.time += (((sectionIndex - currentIndex) * 60) / (currentBpm * RESOLUTION));
+        }
+      });
     }
     currentIndex = index;
     currentBpm = bpm;
@@ -282,6 +302,15 @@ const convert = source => {
     }
   });
 
+  sections.forEach((sectionIndex, arrayIndex) => {
+    const bookmark = bookmarks[arrayIndex];
+
+    if (!bookmark.found) {
+      bookmark.found = true;
+      bookmark.time += (((sectionIndex - currentIndex) * 60) / (currentBpm * RESOLUTION));
+    }
+  });
+
   notes.forEach(({
     osuNote,
     time,
@@ -290,6 +319,8 @@ const convert = source => {
   }) => {
     txt += `\n${osuNote},192,${(round(time * 1000))},${noteType},0,${timeEnd > 0 ? `${(round(timeEnd * 1000))}:` : ''}0:0:0:0`;
   });
+
+  document.getElementById('bookmarks').value = `Bookmarks: ${bookmarks.map(x => round(x.time * 1000)).join(',')}`;
 
   return `[TimingPoints]${timingPoints}\n\n[HitObjects]${txt}`;
 };
@@ -330,6 +361,8 @@ Offset (ms) if necessary <input type="number" id="offset" value="-23" /><br />
 <label>1K output (all notes to 1 lane)<input type="checkbox" id="one_key" /></label><br />
 <label>Disable rounding to nearest ms time<input type="checkbox" id="rounding" /></label><br />
 <br /><br /><br />
+<input type="text" id="bookmarks" placeholder="Bookmarks" style="width:800px;" />
+<br /><br />
 <textarea style="width:800px;height:500px" id="result" placeholder="Timing points and notes will appear below:
 
 Find your osu! song folder (File > Open Song Folder in osu! editor).
